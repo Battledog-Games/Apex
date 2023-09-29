@@ -30,7 +30,7 @@ interface IBattledog {
  * @title Proof of Play Miner contract
  */
 contract ProofOfPlay is Ownable, ReentrancyGuard {
-    IERC20 public GAMEToken;
+    IERC20 public BLOCKToken;
     uint256 public totalClaimedRewards;
     uint256 public multiplier = 10;
     uint256 public timeLock = 24 hours;
@@ -69,11 +69,11 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
     event RewardClaimedByMiner (address indexed user, uint256 amount);
     
     constructor(
-        address _GAMEToken,
+        address _BLOCKToken,
         address _battledogs,
         address _newGuard
     ) {
-        GAMEToken = IERC20(_GAMEToken);
+        BLOCKToken = IERC20(_BLOCKToken);
         battledogs = _battledogs;
         guard = _newGuard;
     }
@@ -112,7 +112,7 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         return false;
     }
 
-    function mineGAME(uint256 _tokenId) public nonReentrant {
+    function mineBLOCK(uint256 _tokenId) public nonReentrant {
         //Require Contract isn't paused
         require(!paused, "Paused Contract");
         //Require Token Ownership    
@@ -142,9 +142,9 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         uint256 rewards = (activate + level + fights + wins + history) * divisor;
 
         // Check the contract for adequate withdrawal balance
-        require(GAMEToken.balanceOf(address(this)) > rewards, "Not Enough Reserves");      
+        require(BLOCKToken.balanceOf(address(this)) > rewards, "Not Enough Reserves");      
         // Transfer the rewards amount to the miner
-        require(GAMEToken.transfer(msg.sender, rewards), "Failed Transfer.");
+        require(BLOCKToken.transfer(msg.sender, rewards), "Failed Transfer.");
         //Register claim
         getCollectors(_tokenId);
         //Register claim timestamp
@@ -202,8 +202,8 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         battledogs = _battledog;
     }
 
-    function setGametoken (address _gametoken) external onlyGuard {
-        GAMEToken = IERC20(_gametoken);
+    function setBlocktoken (address _blocktoken) external onlyGuard {
+        BLOCKToken = IERC20(_blocktoken);
     }
 
     event Pause();
