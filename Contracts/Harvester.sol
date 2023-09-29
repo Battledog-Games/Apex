@@ -10,7 +10,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 
 contract Harvester is Ownable, ReentrancyGuard {
-    IERC20 public BLOCKToken;
+    IERC20 public GAMEToken;
     IERC20 public payToken;
     uint256 public totalRewards = 1;
     uint256 public totalClaimedRewards;
@@ -19,7 +19,7 @@ contract Harvester is Ownable, ReentrancyGuard {
     uint256 public numberOfParticipants = 0;
     uint256 public Duration = 604800;
     uint256 public timeLock = 5;
-    uint256 public TotalBLOCKSent = 1;
+    uint256 public TotalGAMESent = 1;
     uint256 public tax = 0;
     uint256 public TaxTotal = 0;
     uint256 private divisor = 100 ether;
@@ -37,22 +37,22 @@ contract Harvester is Ownable, ReentrancyGuard {
 
     struct Claim {
         uint256 eraAtBlock;
-        uint256 BLOCKSent;
+        uint256 GAMESent;
         uint256 rewardsOwed;
     }
     
     event RewardsUpdated(uint256 totalRewards);
     event RewardAddedByDev(uint256 amount);
     event RewardClaimedByUser(address indexed user, uint256 amount);
-    event AddBLOCK(address indexed user, uint256 amount);
-    event WithdrawBLOCK(address indexed user, uint256 amount);
+    event AddGAME(address indexed user, uint256 amount);
+    event WithdrawGAME(address indexed user, uint256 amount);
     
     constructor(
-        address _BLOCKToken,
+        address _GAMEToken,
         address _payToken,
         address _newGuard
     ) {
-        BLOCKToken = IERC20(_BLOCKToken);
+        GAMEToken = IERC20(_GAMEToken);
         payToken = IERC20(_payToken);
         guard = _newGuard;
         startTime = block.timestamp;
@@ -73,11 +73,11 @@ contract Harvester is Ownable, ReentrancyGuard {
         _;
     }
 
-    function addBLOCK(uint256 _amount) public nonReentrant {
+    function addGAME(uint256 _amount) public nonReentrant {
         require(!paused, "Contract is paused.");
         require(_amount > 0, "Amount must be greater than zero.");
         require(blacklist[msg.sender] == 0, "Address is blacklisted.");
-        require(BLOCKToken.transferFrom(msg.sender, address(this), _amount), "Transfer failed.");
+        require(GAMEToken.transferFrom(msg.sender, address(this), _amount), "Transfer failed.");
         Claim storage claimData = claimRewards[msg.sender];
         uint256 toll = (_amount * tax)/100;
         uint256 amount = _amount - toll;
@@ -95,27 +95,27 @@ contract Harvester is Ownable, ReentrancyGuard {
         }
     
         claimData.eraAtBlock = block.timestamp;
-        claimData.BLOCKSent += amount;
-        TotalBLOCKSent += amount;
+        claimData.GAMESent += amount;
+        TotalGAMESent += amount;
         setRewards();
-        emit AddBLOCK(msg.sender, _amount);
+        emit AddGAME(msg.sender, _amount);
     }
 
     /**
-    * @dev Allows the user to withdraw their BLOCK tokens
+    * @dev Allows the user to withdraw their GAME tokens
     */
-    function withdrawBLOCK() public nonReentrant onlyAfterTimelock {
+    function withdrawGAME() public nonReentrant onlyAfterTimelock {
         require(!paused, "Contract already paused.");
-        require(balances[msg.sender] > 0, "No BLOCK tokens to withdraw.");        
-        uint256 BLOCKAmount = balances[msg.sender];
-        require(BLOCKToken.transfer(msg.sender, BLOCKAmount), "Failed Transfer");  
+        require(balances[msg.sender] > 0, "No GAME tokens to withdraw.");        
+        uint256 GAMEAmount = balances[msg.sender];
+        require(GAMEToken.transfer(msg.sender, GAMEAmount), "Failed Transfer");  
         
         updateAllClaims();     
-         //Delete all allocations of BLOCK
+         //Delete all allocations of GAME
         balances[msg.sender] = 0;
-        TotalBLOCKSent -= BLOCKAmount;
+        TotalGAMESent -= GAMEAmount;
         Claim storage claimData = claimRewards[msg.sender];
-        claimData.BLOCKSent = 0;
+        claimData.GAMESent = 0;
 
        setRewards();
 
@@ -124,7 +124,7 @@ contract Harvester is Ownable, ReentrancyGuard {
             entryMap[msg.sender] = 0; // reset the user's entry timestamp
         }
         
-        emit WithdrawBLOCK(msg.sender, BLOCKAmount);
+        emit WithdrawGAME(msg.sender, GAMEAmount);
     }
 
     /**
@@ -154,7 +154,7 @@ contract Harvester is Ownable, ReentrancyGuard {
             if (blacklist[participant] == 1) {
                 claimData.rewardsOwed = 0;
             } else {
-                uint256 rewardsAccrued = claimData.rewardsOwed + (rewardPerStamp * period * claimData.BLOCKSent);
+                uint256 rewardsAccrued = claimData.rewardsOwed + (rewardPerStamp * period * claimData.GAMESent);
                 claimData.rewardsOwed = rewardsAccrued;
             }
             claimData.eraAtBlock = currentTime;
@@ -162,7 +162,7 @@ contract Harvester is Ownable, ReentrancyGuard {
     }
 
     function updateRewardPerStamp() internal {
-        rewardPerStamp = (totalRewards * divisor) / (TotalBLOCKSent * Duration);
+        rewardPerStamp = (totalRewards * divisor) / (TotalGAMESent * Duration);
     }
 
     function claim() public nonReentrant onlyClaimant {  
@@ -189,8 +189,8 @@ contract Harvester is Ownable, ReentrancyGuard {
             require(payToken.transfer(msg.sender, amount), "Transfer failed.");
         } else {
             require(amount <= TaxTotal, "Max Exceeded.");
-            require(BLOCKToken.balanceOf(address(this)) >= TaxTotal, "Not enough Reserves.");
-            require(BLOCKToken.transfer(msg.sender, amount), "Transfer failed.");
+            require(GAMEToken.balanceOf(address(this)) >= TaxTotal, "Not enough Reserves.");
+            require(GAMEToken.transfer(msg.sender, amount), "Transfer failed.");
             TaxTotal -= amount;
         }
         setRewards();
@@ -210,8 +210,8 @@ contract Harvester is Ownable, ReentrancyGuard {
         tax = _percent;
     }
 
-    function setBLOCKToken(address _BLOCKToken) external onlyOwner {
-        BLOCKToken = IERC20(_BLOCKToken);
+    function setGAMEToken(address _GAMEToken) external onlyOwner {
+        GAMEToken = IERC20(_GAMEToken);
     }
 
     function setPayToken(address _payToken) external onlyOwner {
