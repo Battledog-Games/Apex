@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: No license
 
-// @title NFT Game by OxSorcerers for Battledog Games (Apex)
+// @title NFT Game by OxSorcerers for Battledog Games (Apexchain)
 // https://twitter.com/0xSorcerers | https://github.com/Dark-Viper | https://t.me/Oxsorcerer | https://t.me/battousainakamoto | https://t.me/darcViper
 
 pragma solidity ^0.8.17;
@@ -12,10 +12,6 @@ import "abdk-libraries-solidity/ABDKMath64x64.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-
-interface Iburn {
-    function Burn(uint256 _amount) external;
-}
 
 contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {        
         constructor(string memory _name, string memory _symbol, address GAMEAddress, address _newGuard) 
@@ -29,7 +25,7 @@ contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;  
 
     uint256 COUNTER = 0;
-    uint256 public mintFee = 0.00001 ether;
+    uint256 public mintFee = 2059.117256432168 ether;
     uint256 public _pid = 0;
     uint256 public _pay = 1;
     uint256 public requiredAmount = 2000000 * 10**6;
@@ -42,11 +38,11 @@ contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {
     string public baseURI;
     address private guard; 
     address public GAME;
-    string public Author = "0xSorcerer | Battousai Nakamoto | Dark-Viper";
+    string public Author = "0xSorcerer";
     bool public paused = false; 
     address payable public developmentAddress;
     address payable public bobbAddress;       
-    address public burnAddress;
+    address public saveAddress;
     uint256 public deadtax;
     uint256 public bobbtax;
     uint256 public devtax;
@@ -190,19 +186,19 @@ contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {
         TokenInfo storage tokens = AllowedCrypto[_pid];
         IERC20 paytoken;
         paytoken = tokens.paytoken;               
-        paytoken.transfer(burnAddress, tax1);               
+        paytoken.transfer(saveAddress, tax1);               
         paytoken.transfer(bobbAddress, tax2); 
         paytoken.transfer(developmentAddress, tax3); 
         TotalContractBurns += burnAmount;       
     }
+        
+    address public harvesterAddress;
 
     function burnGAME(uint256 _burnAmount) internal {
         TokenInfo storage tokens = AllowedCrypto[_pay];
         IERC20 paytoken;
         paytoken = tokens.paytoken;
-        paytoken.transferFrom(msg.sender, address(this), _burnAmount);
-        // Call the Burn function from the GAME contract
-        Iburn(GAME).Burn(_burnAmount);
+        require(paytoken.transferFrom(msg.sender, harvesterAddress, _burnAmount), "Transfer Failed");
         TotalGAMEBurns += _burnAmount;       
     }
     
@@ -343,7 +339,7 @@ contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {
         require(!paused, "Paused Contract");
         require(msg.sender == ownerOf(attackerId), "Not your NFT"); 
         require(!blacklisted[attackerId].blacklist, "Blacklisted"); 
-        require(players[attackerId].activate > 0 && players[defenderId].activate > 0, "Activate NFT");       
+        require(players[attackerId].activate > 0 && players[defenderId].activate > 0, "Activate NFT.");
         require(players[attackerId].defence > 0, "No defence");
         require(players[defenderId].defence > 0, "Impotent enemy");
         require(functionCalls[attackerId] < 1001, "Limit reached.");
@@ -456,10 +452,10 @@ contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {
         paytoken.transfer(msg.sender, _amount);
     }
 
-    function setAddresses(address _developmentAddress, address _bobbAddress, address _burnAddress) public onlyOwner {
+    function setAddresses(address _developmentAddress, address _bobbAddress, address _saveAddress) public onlyOwner {
         developmentAddress = payable (_developmentAddress);
         bobbAddress = payable (_bobbAddress);
-        burnAddress = _burnAddress;
+        saveAddress = _saveAddress;
     }
 
     event PayoutsClaimed(address indexed _player, uint256 indexed _amount);
@@ -614,4 +610,4 @@ contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {
     function setGuard (address _newGuard) external onlyGuard {
         guard = _newGuard;
     }
-}              
+}
