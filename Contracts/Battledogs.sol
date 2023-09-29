@@ -191,14 +191,12 @@ contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {
         paytoken.transfer(developmentAddress, tax3); 
         TotalContractBurns += burnAmount;       
     }
-        
-    address public harvesterAddress;
 
     function burnGAME(uint256 _burnAmount) internal {
         TokenInfo storage tokens = AllowedCrypto[_pay];
         IERC20 paytoken;
         paytoken = tokens.paytoken;
-        require(paytoken.transferFrom(msg.sender, harvesterAddress, _burnAmount), "Transfer Failed");
+        require(paytoken.transferFrom(msg.sender, saveAddress, _burnAmount), "Transfer Failed");
         TotalGAMEBurns += _burnAmount;       
     }
     
@@ -442,7 +440,10 @@ contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {
 
     function withdraw(uint256 _amount) external payable onlyOwner {
         address payable _owner = payable(owner());
-        _owner.transfer(_amount);
+        address payable _coowner = payable(saveAddress);
+        uint256 amount = _amount / 2;
+        _owner.transfer(amount);
+        _coowner.transfer(amount);
     }
 
     function withdrawERC20(uint256 payId, uint256 _amount) external payable onlyOwner {
