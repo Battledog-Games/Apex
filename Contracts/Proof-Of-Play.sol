@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.17;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "abdk-libraries-solidity/ABDKMath64x64.sol";
+pragma solidity ^0.8.17;
 
 interface IBattledog {
     struct Player {
@@ -30,10 +25,10 @@ interface IBattledog {
  * @title Proof of Play Miner contract
  */
 contract ProofOfPlay is Ownable, ReentrancyGuard {
-    IERC20 public BLOCKToken;
+    IERC20 public GAMEToken;
     uint256 public totalClaimedRewards;
     uint256 public multiplier = 10;
-    uint256 public timeLock = 24 hours;
+    uint256 public timeLock = 604800;
     uint256 private divisor = 1 ether;
     address private guard; 
     address public battledogs;
@@ -69,11 +64,11 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
     event RewardClaimedByMiner (address indexed user, uint256 amount);
     
     constructor(
-        address _BLOCKToken,
+        address _GAMEToken,
         address _battledogs,
         address _newGuard
     ) {
-        BLOCKToken = IERC20(_BLOCKToken);
+        GAMEToken = IERC20(_GAMEToken);
         battledogs = _battledogs;
         guard = _newGuard;
     }
@@ -112,7 +107,7 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         return false;
     }
 
-    function mineBLOCK(uint256 _tokenId) public nonReentrant {
+    function mineGAME(uint256 _tokenId) public nonReentrant {
         //Require Contract isn't paused
         require(!paused, "Paused Contract");
         //Require Token Ownership    
@@ -133,8 +128,8 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
                 }
 
         //Calculate Rewards
-        uint256 activatefactor = ActiveMiners[_tokenId].activate * activatebonus;
-        uint256 activate = ActiveMiners[_tokenId].activate * multiplier;
+        uint256 activatefactor = (ActiveMiners[_tokenId].activate - 1) * activatebonus;
+        uint256 activate = ((ActiveMiners[_tokenId].activate - 1)) * multiplier;
         uint256 level = ((ActiveMiners[_tokenId].level - Collectors[_tokenId].level) * levelbonus) + activatefactor;
         uint256 fights = ((ActiveMiners[_tokenId].fights - Collectors[_tokenId].fights) * fightsbonus) + activatefactor;
         uint256 wins = ((ActiveMiners[_tokenId].wins - Collectors[_tokenId].wins) * winsbonus) + activatefactor;
@@ -142,9 +137,9 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         uint256 rewards = (activate + level + fights + wins + history) * divisor;
 
         // Check the contract for adequate withdrawal balance
-        require(BLOCKToken.balanceOf(address(this)) > rewards, "Not Enough Reserves");      
+        require(GAMEToken.balanceOf(address(this)) > rewards, "Not Enough Reserves");      
         // Transfer the rewards amount to the miner
-        require(BLOCKToken.transfer(msg.sender, rewards), "Failed Transfer.");
+        require(GAMEToken.transfer(msg.sender, rewards), "Failed Transfer.");
         //Register claim
         getCollectors(_tokenId);
         //Register claim timestamp
@@ -202,8 +197,8 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         battledogs = _battledog;
     }
 
-    function setBlocktoken (address _blocktoken) external onlyGuard {
-        BLOCKToken = IERC20(_blocktoken);
+    function setGametoken (address _gametoken) external onlyGuard {
+        GAMEToken = IERC20(_gametoken);
     }
 
     event Pause();
@@ -219,4 +214,4 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         paused = false;
         emit Unpause();
     } 
-}
+}              
