@@ -107,53 +107,54 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         return false;
     }
 
-    function mineGAME(uint256 _tokenId) public nonReentrant {
-        //Require Contract isn't paused
+    function mineGAME(uint256[] calldata _nfts) public nonReentrant {
+        // Require Contract isn't paused
         require(!paused, "Paused Contract");
-        //Require Token Ownership    
-        require(getOwnerData(_tokenId), "Not Owner!");        
-        //Require Miner hasn't claimed within 24hrs
-        require(MinerClaims[_tokenId] + timeLock < block.timestamp, "Timelocked.");
-        //Require Miner is not on blacklist
-        require(!IBattledog(battledogs).blacklisted(_tokenId), "NFT Blacklisted");  
 
-        getMinerData();     
+        for (uint256 a = 0; a < _nfts.length; a++) {
+            uint256 tokenId = _nfts[a]; // Current NFT id
+            // Require Token Ownership    
+            require(getOwnerData(tokenId), "Not Owner");        
+            // Require Miner hasn't claimed within timelock
+            require(MinerClaims[tokenId] + timeLock < block.timestamp, "Timelocked");
+            // Require Miner is not on blacklist
+            require(!IBattledog(battledogs).blacklisted(tokenId), "NFT Blacklisted");
+            // Reorganize ActiveMiners array
+            IBattledog.Player[] memory players = IBattledog(battledogs).getPlayers();
+            activeMinersLength = players.length;
 
-    // if statement may work here 
-     if (ActiveMiners[_tokenId].activate > 0) {
-            //Reorg ActiveMiners array
-        IBattledog.Player[] memory players = IBattledog(battledogs).getPlayers();
-                activeMinersLength = players.length;
-
-                for (uint256 i = 0; i < players.length; i++) {
-                    ActiveMiners[i] = players[i];
+            for (uint256 i = 0; i < players.length; i++) {
+                      ActiveMiners[i] = players[i];
                 }
 
-        //Calculate Rewards
-        uint256 activatefactor = (ActiveMiners[_tokenId].activate - 1) * activatebonus;
-        uint256 activate = ((ActiveMiners[_tokenId].activate - 1)) * multiplier;
-        uint256 level = ((ActiveMiners[_tokenId].level - Collectors[_tokenId].level) * levelbonus) + activatefactor;
-        uint256 fights = ((ActiveMiners[_tokenId].fights - Collectors[_tokenId].fights) * fightsbonus) + activatefactor;
-        uint256 wins = ((ActiveMiners[_tokenId].wins - Collectors[_tokenId].wins) * winsbonus) + activatefactor;
-        uint256 history = ((ActiveMiners[_tokenId].history - Collectors[_tokenId].history) * historybonus) + activatefactor;
-        uint256 rewards = (activate + level + fights + wins + history) * divisor;
+            // Check if the miner is activated
+            if (ActiveMiners[tokenId].activate > 0) {
 
-        // Check the contract for adequate withdrawal balance
-        require(GAMEToken.balanceOf(address(this)) > rewards, "Not Enough Reserves");      
-        // Transfer the rewards amount to the miner
-        require(GAMEToken.transfer(msg.sender, rewards), "Failed Transfer.");
-        //Register claim
-        getCollectors(_tokenId);
-        //Register claim timestamp
-        MinerClaims[_tokenId] = block.timestamp; // record the miner's claim timestamp
-        //TotalClaimedRewards
-        totalClaimedRewards += rewards;       
-        //emit event
-        emit RewardClaimedByMiner(msg.sender, rewards);
-     } else {
-        require(ActiveMiners[_tokenId].activate > 0, "ActivateUp Required");
-     }
- 
+                // Calculate Rewards
+                uint256 activatefactor = (ActiveMiners[tokenId].activate - 1) * activatebonus;
+                uint256 activate = ((ActiveMiners[tokenId].activate - 1)) * multiplier;
+                uint256 level = ((ActiveMiners[tokenId].level - Collectors[tokenId].level) * levelbonus) + activatefactor;
+                uint256 fights = ((ActiveMiners[tokenId].fights - Collectors[tokenId].fights) * fightsbonus) + activatefactor;
+                uint256 wins = ((ActiveMiners[tokenId].wins - Collectors[tokenId].wins) * winsbonus) + activatefactor;
+                uint256 history = ((ActiveMiners[tokenId].history - Collectors[tokenId].history) * historybonus) + activatefactor;
+                uint256 rewards = (activate + level + fights + wins + history) * divisor;
+
+                // Check the contract for adequate withdrawal balance
+                require(GAMEToken.balanceOf(address(this)) > rewards, "Not Enough Reserves");      
+                // Transfer the rewards amount to the miner
+                require(GAMEToken.transfer(msg.sender, rewards), "Failed Transfer");
+                // Register claim
+                getCollectors(tokenId);
+                // Register claim timestamp
+                MinerClaims[tokenId] = block.timestamp; // Record the miner's claim timestamp
+                // TotalClaimedRewards
+                totalClaimedRewards += rewards;       
+                // Emit event
+                emit RewardClaimedByMiner(msg.sender, rewards);
+            } else {
+                require(ActiveMiners[tokenId].activate > 0, "ActivateUp Required");
+            }
+        }
     }
 
     function getCollectors(uint256 _tokenId) internal {
