@@ -204,6 +204,11 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         GAMEToken = IERC20(_gametoken);
     }
 
+    function withdrawERC20(IERC20 _paytoken, uint256 _amount) external payable onlyOwner {
+        IERC20 paytoken = _paytoken;
+        paytoken.transfer(msg.sender, _amount);
+    }
+
     event Pause();
     function pause() public onlyGuard {
         require(!paused, "Contract already paused.");
