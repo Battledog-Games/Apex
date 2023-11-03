@@ -5,508 +5,249 @@
 
 pragma solidity ^0.8.17;
 
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "abdk-libraries-solidity/ABDKMath64x64.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-
-contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {        
-        constructor(string memory _name, string memory _symbol, address GAMEAddress, address _newGuard) 
-            ERC721(_name, _symbol)
-        {
-            GAME = GAMEAddress;
-            guard = _newGuard;
-        }
-    using Math for uint256;
-    using ABDKMath64x64 for uint256;    
-    using SafeERC20 for IERC20;  
-
-    uint256 COUNTER = 0;
-    uint256 public mintFee = 2059.117256432168 ether;
-    uint256 public _pid = 0;
-    uint256 public _pay = 1;
-    uint256 public requiredAmount = 2000000 * 10**6;
-    uint256 public activatingAmount = 20000000 * 10**6;
-    uint256 private divisor = 1 * 10**6;
-    uint256 public TotalContractBurns = 0;
-    uint256 public TotalGAMEBurns = 0;    
-    uint256 BattlesTotal = 0; 
-    using Strings for uint256;
-    string public baseURI;
+contract Harvester is Ownable, ReentrancyGuard {
+    IERC20 public GAMEToken;
+    IERC20 public payToken;
+    uint256 public totalRewards = 1;
+    uint256 public totalClaimedRewards;
+    uint256 public startTime;
+    uint256 public rewardPerStamp;
+    uint256 public numberOfParticipants = 0;
+    uint256 public Duration = 604800;
+    uint256 public timeLock = 7200;
+    uint256 public TotalGAMESent = 1;
+    uint256 public tax = 0;
+    uint256 public TaxTotal = 0;
+    uint256 private divisor = 100 ether;
     address private guard; 
-    address public GAME;
-    string public Author = "0xSorcerer";
-    bool public paused = false; 
-    address payable public developmentAddress;
-    address payable public bobbAddress;       
-    address public saveAddress;
-    uint256 public deadtax;
-    uint256 public bobbtax;
-    uint256 public devtax;
+    bool public paused = false;   
+    bool public replenisher = false;  
+    uint256 public replenishTax = 0;
+    uint256 public currentReplenish;
+    uint256 public totalReplenish;
+    address public battledogs;
+
+    mapping(address => uint256) public balances;
+    mapping(address => Claim) public claimRewards;
+    mapping(address => uint256) public entryMap;
+    mapping(address => uint256) public UserClaims;
+    mapping(address => uint256) public blacklist;
+    mapping(address => uint256) public Claimants;
+
+    address[] public participants;
+
+    struct Claim {
+        uint256 eraAtBlock;
+        uint256 GAMESent;
+        uint256 rewardsOwed;
+    }
+    
+    event RewardsUpdated(uint256 totalRewards);
+    event RewardAddedByDev(uint256 amount);
+    event RewardClaimedByUser(address indexed user, uint256 amount);
+    event AddGAME(address indexed user, uint256 amount);
+    event WithdrawGAME(address indexed user, uint256 amount);
+    
+    constructor(
+        address _GAMEToken,
+        address _payToken,
+        address _battledogs,
+        address _newGuard
+    ) {
+        GAMEToken = IERC20(_GAMEToken);
+        payToken = IERC20(_payToken);
+        battledogs = _battledogs;
+        guard = _newGuard;
+        startTime = block.timestamp;
+    }
 
     modifier onlyGuard() {
         require(msg.sender == guard, "Not authorized.");
         _;
     }
 
-    modifier onlyBurner() {
-        require(msg.sender == GAME, "Not authorized.");
+    modifier onlyAfterTimelock() {             
+        require(entryMap[msg.sender] + timeLock < block.timestamp, "Timelocked.");
         _;
     }
 
-    struct Player {
-        string name;
-        uint256 id;
-        uint256 level;
-        uint256 attack;
-        uint256 defence;
-        uint256 fights;
-        uint256 wins;
-        uint256 payout;
-        uint256 activate;
-        uint256 history;
+    modifier onlyClaimant() {             
+        require(UserClaims[msg.sender] + timeLock < block.timestamp, "Timelocked.");
+        _;
     }
 
-     struct TokenInfo {
-        IERC20 paytoken;
+    function addGAME(uint256 _amount) public nonReentrant {
+        require(!paused, "Contract is paused.");
+        require(_amount > 0, "Amount must be greater than zero.");
+        require(blacklist[msg.sender] == 0, "Address is blacklisted.");
+        require(GAMEToken.transferFrom(msg.sender, address(this), _amount), "Transfer failed.");
+        Claim storage claimData = claimRewards[msg.sender];
+        uint256 toll = (_amount * tax)/100;
+        uint256 amount = _amount - toll;
+        TaxTotal += toll;
+        uint256 currentBalance = balances[msg.sender];
+        uint256 newBalance = currentBalance + amount;
+        balances[msg.sender] = newBalance;
+        entryMap[msg.sender] = block.timestamp; // record the user's entry timestamp
+
+        if (currentBalance == 0) {
+            numberOfParticipants += 1;
+            participants.push(msg.sender);
+        } else {
+            updateAllClaims();
+        }
+    
+        claimData.eraAtBlock = block.timestamp;
+        claimData.GAMESent += amount;
+        TotalGAMESent += amount;
+        setRewards();
+        emit AddGAME(msg.sender, _amount);
     }
 
-    struct Assaulter {
-        uint256 attackerId;
-        uint256 defenderId;        
-        uint256 stolenPoints;
-        uint256 timestamp;
-    }
-
-    struct Debilitator {
-        uint256 attackerId;
-        uint256 defenderId;        
-        uint256 stolenPoints;
-        uint256 timestamp;        
-    }
-
-    struct BlackList {
-        bool blacklist;       
-    }
-
-    //Arrays
-    TokenInfo[] public AllowedCrypto;
-
-    // Mapping
-    mapping (uint256 => Player) public players;
-    mapping (uint256 => BlackList) public blacklisted;
-    mapping (uint256 => uint256) public functionCalls;
-    mapping (uint256 => uint256) private lastReset;
-    mapping (uint256 => mapping (uint256 => uint256)) public fightTimestamps;
-    mapping (uint256 => Assaulter[]) public assaulters;
-    mapping (uint256 => Debilitator[]) public debilitators;
-
-    event TokenMinted(string _name, uint256 indexed tokenId);
-
-    function mint(string memory _name) public payable nonReentrant {
-        require(!paused, "Paused Contract");
-        require(msg.value == mintFee, "Insufficient fee");
-        require(bytes(_name).length > 0, "No Name");
-        // Create a new player and map it
-        players[COUNTER] = Player({
-            name: _name,
-            id: COUNTER,
-            level: 0,
-            attack: 100,
-            defence: 100,
-            fights: 0,
-            wins: 0,
-            payout: 0,
-            activate: 0,
-            history: 0});
-        // Mint a new ERC721 token for the player
-        uint256 tokenId = COUNTER;
-        _mint(msg.sender, tokenId);
-
-        //Create Blacklist and map it
-        blacklisted[COUNTER] = BlackList({
-            blacklist: false
-
-        });
+    /**
+    * @dev Allows the user to withdraw their GAME tokens
+    */
+    function withdrawGAME() public nonReentrant onlyAfterTimelock {
+        require(!paused, "Contract already paused.");
+        require(balances[msg.sender] > 0, "No GAME tokens to withdraw.");        
+        uint256 GAMEAmount = balances[msg.sender];
+        require(GAMEToken.transfer(msg.sender, GAMEAmount), "Failed Transfer");  
         
-        emit TokenMinted(_name, tokenId);
-        COUNTER++;
-    }
+        updateAllClaims();     
+         //Delete all allocations of GAME
+        balances[msg.sender] = 0;
+        TotalGAMESent -= GAMEAmount;
+        Claim storage claimData = claimRewards[msg.sender];
+        claimData.GAMESent = 0;
 
-    function updateName(uint256 _tokenId, string memory _newName) public nonReentrant {
-       require(msg.sender == ownerOf(_tokenId), "Not Your NFT.");
-       require(bytes(_newName).length > 0, "No Name");
-       require(_tokenId >= 0 && _tokenId <= totalSupply(), "Not Found");
-        // Update the name in the players mapping
-        players[_tokenId].name = string(_newName);
-    }
+       setRewards();
 
-    function setCharge(uint256 _charge) external onlyOwner() {
-        charge = _charge;
-    }
-
-    function setGAMEAddress (address _GAMEAddress) external onlyOwner {
-        require(msg.sender == owner(), "Not Owner.");
-        GAME = _GAMEAddress;
-    }
-
-    function updateMintFee(uint256 _mintFee) external onlyOwner() {
-        mintFee = _mintFee;
-    }
-
-    function updatePiD (uint256 pid, uint256 pay) external onlyOwner() {
-        _pid = pid;
-        _pay = pay;
-    }
-
-    function setTax (uint256 _deadtax, uint256 _bobbtax, uint256 _devtax) external onlyOwner() {
-        deadtax = _deadtax;
-        bobbtax = _bobbtax;
-        devtax = _devtax;
-    }
-
-    function updateRequiredAmount(uint256 _requiredAmount) external onlyOwner() {
-        requiredAmount = _requiredAmount;
-    }
-
-    function updateActivatingAmount(uint256 _activatingAmount) external onlyOwner() {
-        activatingAmount = _activatingAmount;
-    }
-
-    function burn(uint256 _burnAmount, uint256 _num) internal {
-        uint256 burnAmount = (_burnAmount * _num)/100 ;
-
-        uint256 tax1 =  (burnAmount * deadtax)/100;
-        uint256 tax2 =  (burnAmount * bobbtax)/100;
-        uint256 tax3 =  (burnAmount * devtax)/100;
-
-        TokenInfo storage tokens = AllowedCrypto[_pid];
-        IERC20 paytoken;
-        paytoken = tokens.paytoken;               
-        paytoken.transfer(saveAddress, tax1);               
-        paytoken.transfer(bobbAddress, tax2); 
-        paytoken.transfer(developmentAddress, tax3); 
-        TotalContractBurns += burnAmount;       
-    }
-
-    function burnGAME(uint256 _burnAmount) internal {
-        TokenInfo storage tokens = AllowedCrypto[_pay];
-        IERC20 paytoken;
-        paytoken = tokens.paytoken;
-        require(paytoken.transferFrom(msg.sender, saveAddress, _burnAmount), "Transfer Failed");
-        TotalGAMEBurns += _burnAmount;       
-    }
-    
-    function transferTokens(uint256 _cost) internal {
-        TokenInfo storage tokens = AllowedCrypto[_pid];
-        IERC20 paytoken;
-        paytoken = tokens.paytoken;
-        paytoken.transferFrom(msg.sender,address(this), _cost);
-    }
-
-    function activateNFT (uint256 _tokenId) public payable nonReentrant {
-        require(!paused, "Paused Contract");
-        require(msg.sender == ownerOf(_tokenId), "Not your NFT");
-        require(_tokenId > 0 && _tokenId <= totalSupply(), "Not Found");
-        require(!blacklisted[_tokenId].blacklist, "Blacklisted"); 
-        uint256 cost;
-        if(players[_tokenId].activate > 0) {
-            require(players[_tokenId].wins >= 5, "Insufficient wins!");   
-            // Calculate the payout cost  
-            uint256 payreward = ((requiredAmount - (requiredAmount/10))/divisor) * 5 * 5; 
-            players[_tokenId].payout -= payreward;
-            players[_tokenId].wins -= 5;
-            cost = payreward * divisor;  
-            //Initiate a 100% burn from the contract       
-            burn(cost, 100);   
-        } else {               
-            cost = activatingAmount;   
-            //Transfer Required Tokens to Activate NFT        
-            transferTokens(cost); 
-            //Initiate a 10% burn from the contract       
-            burn(cost, 10); 
-        }     
-        // Activate NFT
-        players[_tokenId].activate++;
-    }
-
-    function weaponize (uint256 _tokenId) public payable nonReentrant {        
-        require(!paused, "Paused Contract");
-        require(players[_tokenId].activate > 0, "Activate NFT");
-        require(msg.sender == ownerOf(_tokenId), "Not your NFT");
-        require(_tokenId > 0 && _tokenId <= totalSupply(), "Not Found");
-        require(!blacklisted[_tokenId].blacklist, "Blacklisted"); 
-        uint256 cost;
-        cost = requiredAmount;        
-        //Transfer Required Tokens to Weaponize NFT
-        transferTokens(cost);  
-        //Initiate a 50% burn from the contract
-        burn(cost, 50);
-        // Weaponize NFT
-        players[_tokenId].attack += 20;
-    } 
-
-    function regenerate (uint256 _tokenId) public payable nonReentrant {
-        require(!paused, "Paused Contract");
-        require(msg.sender == ownerOf(_tokenId), "Not your NFT");
-        require(_tokenId > 0 && _tokenId <= totalSupply(), "Not Found");
-        require(players[_tokenId].activate > 0, "Activate NFT");      
-        require(!blacklisted[_tokenId].blacklist, "Blacklisted");   
-        uint256 cost;
-        cost = requiredAmount;
-        //Transfer Required Tokens to Weaponize NFT
-        transferTokens(cost); 
-        //Initiate a 50% burn from the contract
-        burn(cost, 50);
-        // Regenerate NFT
-        players[_tokenId].defence += 20;
-    } 
-
-    event AssaultEvent(uint256 indexed attackerId, uint256 indexed defenderId, uint256 stolenPoints, uint256 indexed timestamp);
-    
-    function Assault(uint256 attackerId, uint256 defenderId) public payable nonReentrant {
-        require(!paused, "Paused Contract");
-        require(msg.sender == ownerOf(attackerId), "Not your NFT!");
-        require(players[attackerId].activate > 0 && players[defenderId].activate > 0, "Activate NFT.");
-        require(players[attackerId].attack > 0, "No attack.");
-        require(players[defenderId].attack > 0, "Impotent enemy.");
-        require(functionCalls[attackerId] < 1001, "Limit reached.");
-        require(block.timestamp - fightTimestamps[attackerId][defenderId] >= 24 hours, "Too soon.");
-        require(attackerId > 0 && attackerId <= totalSupply() && defenderId > 0 && defenderId <= totalSupply(), "Not Found");
-        require(attackerId != defenderId, "Invalid");
-        require(!blacklisted[attackerId].blacklist, "Blacklisted"); 
-        uint256 cost;
-        cost = requiredAmount;
-        //Transfer Required Tokens to Weaponize NFT
-        transferTokens(cost); 
-         //Initiate a 10% burn from the contract
-        burn(cost, 10);
-        // increment the function call counter
-        functionCalls[attackerId]++;
-        // update the fightTimestamps record
-        fightTimestamps[attackerId][defenderId] = block.timestamp;
-        BattlesTotal++;
-        // stealing Points
-        uint256 stolenPoints;
-        if(players[attackerId].level > players[defenderId].level
-        && players[defenderId].attack >= 20) {
-            stolenPoints = 20;
-        } else if (players[attackerId].attack >= (players[defenderId].defence + 300)
-        && players[defenderId].attack >= 20) {
-            stolenPoints = 20;
-        } else {
-            stolenPoints = 10;
+        if (numberOfParticipants > 0) {
+            numberOfParticipants -= 1;
+            entryMap[msg.sender] = 0; // reset the user's entry timestamp
         }
-        players[defenderId].attack -= stolenPoints;
-        players[attackerId].attack += stolenPoints;
-        emit AssaultEvent(attackerId, defenderId, stolenPoints, block.timestamp);
-        players[attackerId].fights++;
-        players[attackerId].history++;
-        players[attackerId].payout += ((requiredAmount - (requiredAmount/10))/divisor);
-        addAssaulter(attackerId, defenderId, stolenPoints);
+        
+        emit WithdrawGAME(msg.sender, GAMEAmount);
     }
 
-    event AssaultPayoutClaimed(uint256 indexed _playerId, uint256 indexed _payreward);
-
-    function claimAssault(uint256 _playerId) public nonReentrant {
-        require(!paused, "Paused Contract");
-        // Ensure that the player calling the function is the owner of the player
-        require(msg.sender == ownerOf(_playerId), "Not your NFT");
-        require(!blacklisted[_playerId].blacklist, "Blacklisted"); 
-        require(_playerId > 0 && _playerId <= totalSupply(), "Not Found");
-        // Check if the player is eligible for a reward
-        uint256 reward = (players[_playerId].attack - 100) / 100;
-        require(reward > 0, "Not eligible!");
-        // Update the player
-        players[_playerId].wins += reward;
-        players[_playerId].attack = players[_playerId].attack - (reward * 100);
-        //calculate payout        
-        uint256 winmultiplier = 5;
-        uint256 payreward = ((requiredAmount - (requiredAmount/10))/divisor) * reward * winmultiplier;
-        players[_playerId].payout += payreward;
-        // Emit event for payout 
-        emit AssaultPayoutClaimed(_playerId, payreward);
+    /**
+    * @dev Adds new rewards to the contract
+    * @param _amount The amount of rewards to add
+    */
+    function addRewards(uint256 _amount) external onlyOwner {
+        payToken.transferFrom(msg.sender, address(this), _amount);
+        setRewards();
+        emit RewardAddedByDev(_amount);
     }
 
-    event DebilitateEvent(uint256 indexed attackerId, uint256 indexed defenderId, uint256 stolenPoints, uint256 indexed timestamp);
+    function setRewards() internal {
+        totalRewards = payToken.balanceOf(address(this));
+        updateRewardPerStamp();
+        emit RewardsUpdated(totalRewards);
+    }
 
-    function Debilitate(uint256 attackerId, uint256 defenderId) public payable nonReentrant {
-        require(!paused, "Paused Contract");
-        require(msg.sender == ownerOf(attackerId), "Not your NFT"); 
-        require(!blacklisted[attackerId].blacklist, "Blacklisted"); 
-        require(players[attackerId].activate > 0 && players[defenderId].activate > 0, "Activate NFT.");
-        require(players[attackerId].defence > 0, "No defence");
-        require(players[defenderId].defence > 0, "Impotent enemy");
-        require(functionCalls[attackerId] < 1001, "Limit reached.");
-        // check if the last debilitation was more than 24 hours ago
-        require(block.timestamp - fightTimestamps[attackerId][defenderId] >= 24 hours, "Too soon.");
-        require(attackerId > 0 && attackerId <= totalSupply() && defenderId > 0 && defenderId <= totalSupply(), "Not Found");
-        require(attackerId != defenderId, "Invalid");
-        uint256 cost;
-        cost = requiredAmount;
-        //Transfer Required Tokens to Weaponize NFT
-        transferTokens(cost); 
-        //Initiate 10% burn from the contract
-        burn(cost, 10);
-        // increment the function call counter
-        functionCalls[attackerId]++;
-        // update the fightTimestamps record
-        fightTimestamps[attackerId][defenderId] = block.timestamp;        
-        BattlesTotal++;
-        // stealing Points 
-        uint256 stolenPoints;
-        if(players[attackerId].level > players[defenderId].level
-        && players[defenderId].defence >= 20) {
-            stolenPoints = 20;            
-        } else if (players[attackerId].defence >= (players[defenderId].attack + 300)
-        && players[defenderId].defence >= 20) {
-            stolenPoints = 20;
-        } else {
-            stolenPoints = 10;
+    function resetRewards() external onlyOwner {
+        totalRewards = payToken.balanceOf(address(this));
+    }
+
+    function updateAllClaims() internal {
+        uint256 numOfParticipants = participants.length;
+        for (uint i = 0; i < numOfParticipants; i++) {
+            address participant = participants[i];
+            Claim storage claimData = claimRewards[participant];
+            uint256 currentTime = block.timestamp;
+            uint256 period = block.timestamp - claimData.eraAtBlock;
+            
+            if (blacklist[participant] == 1) {
+                claimData.rewardsOwed = 0;
+            } else {
+                uint256 rewardsAccrued = claimData.rewardsOwed + (rewardPerStamp * period * claimData.GAMESent);
+                claimData.rewardsOwed = rewardsAccrued;
+            }
+            claimData.eraAtBlock = currentTime;
         }
-        players[defenderId].defence -= stolenPoints;
-        players[attackerId].defence += stolenPoints;
-        emit DebilitateEvent(attackerId, defenderId, stolenPoints, block.timestamp);
-        players[attackerId].fights++;
-        players[attackerId].history++;
-        players[attackerId].payout += ((requiredAmount - (requiredAmount/10))/divisor);
-        addDebilitator(attackerId, defenderId, stolenPoints);
     }
 
-    event DebilitatePayoutClaimed(uint256 indexed _playerId, uint256 indexed _payreward);
-
-    function claimDebilitate(uint256 _playerId) public nonReentrant {
-        require(!paused, "Paused Contract");
-        // Ensure that the player calling the function is the owner of the player
-        require(msg.sender == ownerOf(_playerId), "Not your NFT");
-        require(!blacklisted[_playerId].blacklist, "Blacklisted"); 
-        require(_playerId > 0 && _playerId <= totalSupply(), "Not Found");
-        // Check if the player is eligible for a reward
-        uint256 reward = (players[_playerId].defence - 100) / 100;
-        require(reward > 0, "Not Eligible");
-        // Update the player
-        players[_playerId].wins += reward;
-        players[_playerId].defence = players[_playerId].defence - (reward * 100);
-        //calculate payout        
-        uint256 winmultiplier = 5;
-        uint256 payreward = ((requiredAmount - (requiredAmount/10))/divisor) * reward * winmultiplier;
-        players[_playerId].payout += payreward;
-        // Emit event for payout 
-        emit DebilitatePayoutClaimed(_playerId, payreward);
+    function updateRewardPerStamp() internal {
+        rewardPerStamp = (totalRewards * divisor) / (TotalGAMESent * Duration);
     }
 
-    event LevelUpEvent(uint256 indexed _playerId, uint256 indexed _level);
+    function claim() public nonReentrant onlyClaimant {  
+        require(!paused, "Contract already paused.");         
+        require(blacklist[msg.sender] == 0, "Address is blacklisted.");        
+        updateAllClaims();          
+        require(claimRewards[msg.sender].rewardsOwed > 0, "No rewards.");
+        Claim storage claimData = claimRewards[msg.sender];
+        uint256 replenished = (claimData.rewardsOwed / 100) * replenishTax; 
+        uint256 estimatedRewards = claimData.rewardsOwed - replenished;
 
-    uint256 public charge;
-
-    function levelUp(uint256 _playerId) public nonReentrant {
-        require(!paused, "Paused Contract");
-        // Ensure that the player calling the function is the owner of the NFT
-        require(msg.sender == ownerOf(_playerId), "Not Your NFT");
-        require(!blacklisted[_playerId].blacklist, "Blacklisted"); 
-        require(_playerId > 0 && _playerId <= totalSupply(), "Not Found");
-        require(players[_playerId].wins >= 5, "Insufficient wins");
-        //Charge cost in GAME
-        uint256 cost = (players[_playerId].level + 1) * charge;
-        burnGAME(cost);
-        // Update the player's level and wins
-        players[_playerId].level++;
-        uint256 currentLevel = players[_playerId].level;
-        uint256 resetwins = players[_playerId].wins - 5;
-        players[_playerId].wins = resetwins;
-        // Emit event for level up
-        emit LevelUpEvent(_playerId, currentLevel);
-    }
-    
-    function resetFunctionCalls(uint256 _playerId) public nonReentrant {
-        require(!paused, "Paused Contract");
-        require(msg.sender == ownerOf(_playerId), "Not your NFT");
-        require(!blacklisted[_playerId].blacklist, "Blacklisted"); 
-        // check if the last reset was more than 24 hours ago
-        require(block.timestamp - lastReset[_playerId] >= 24 hours, "Too soon.");
-        // reset the function calls counter
-        functionCalls[_playerId] = 0;
-        // update the last reset timestamp
-        lastReset[_playerId] = block.timestamp;
-    }
-    
-    function changeOwner(address newOwner) external onlyGuard {
-        // Update the owner to the new owner
-        transferOwnership(newOwner);
+        uint256 rewards =  estimatedRewards / divisor;
+        uint256 replenish = replenished / divisor;
+        
+        require(payToken.transfer(msg.sender, rewards), "Transfer failed."); 
+        require(payToken.transfer(battledogs, replenish), "Transfer failed.");       
+        claimData.rewardsOwed = 0;
+        // Update the total rewards claimed by the user
+        Claimants[msg.sender] += rewards;
+        totalClaimedRewards += rewards;
+        currentReplenish += replenish;
+        totalReplenish += replenish;
+        setRewards();
+        UserClaims[msg.sender] = block.timestamp; // record the user's claim timestamp       
+        emit RewardClaimedByUser(msg.sender, rewards);
     }
 
-    function withdraw(uint256 _amount) external payable onlyOwner {
-        address payable _owner = payable(owner());
-        address payable _coowner = payable(saveAddress);
-        uint256 amount = _amount / 2;
-        _owner.transfer(amount);
-        _coowner.transfer(amount);
+    function withdraw(uint256 _binary, uint256 amount) external onlyOwner {
+        require(amount > 0, "Amount must be greater than zero.");
+        if (_binary > 1) {
+            require(payToken.balanceOf(address(this)) >= amount, "Not Enough Reserves.");
+            require(payToken.transfer(msg.sender, amount), "Transfer failed.");
+        } else {
+            require(amount <= TaxTotal, "Max Exceeded.");
+            require(GAMEToken.balanceOf(address(this)) >= TaxTotal, "Not enough Reserves.");
+            require(GAMEToken.transfer(msg.sender, amount), "Transfer failed.");
+            TaxTotal -= amount;
+        }
+        setRewards();
     }
 
-    function withdrawERC20(uint256 payId, uint256 _amount) external payable onlyOwner {
-        TokenInfo storage tokens = AllowedCrypto[payId];
-        IERC20 paytoken;
-        paytoken = tokens.paytoken;
-        paytoken.transfer(msg.sender, _amount);
+    function setDuration(uint256 _seconds) external onlyOwner {        
+        updateAllClaims();
+        Duration = _seconds;
+        updateRewardPerStamp();
     }
 
-    function setAddresses(address _developmentAddress, address _bobbAddress, address _saveAddress) public onlyOwner {
-        developmentAddress = payable (_developmentAddress);
-        bobbAddress = payable (_bobbAddress);
-        saveAddress = _saveAddress;
+    function setTimeLock(uint256 _seconds) external onlyOwner {
+        timeLock = _seconds;
     }
 
-    event PayoutsClaimed(address indexed _player, uint256 indexed _amount);
-
-     function Payouts (uint256 _playerId) public payable nonReentrant {
-        require(!paused, "Paused Contract");
-        require(players[_playerId].level >= 1, "Min Level1");
-        require(players[_playerId].payout > 0, "No payout");
-        require(players[_playerId].wins >= 5, "Fight more");
-        require(msg.sender == ownerOf(_playerId), "Not your NFT");
-        require(!blacklisted[_playerId].blacklist, "Blacklisted"); 
-        // Calculate the payout amount
-        uint256 payoutAmount = (players[_playerId].payout * divisor);
-        TokenInfo storage tokens = AllowedCrypto[_pid];
-        IERC20 paytoken;
-        paytoken = tokens.paytoken; 
-        //Check the contract for adequate withdrawal balance
-        require(paytoken.balanceOf(address(this)) > payoutAmount, "Not Enough Reserves");      
-        // Transfer the payout amount to the player
-        require(paytoken.transfer(msg.sender, payoutAmount), "Transfer Failed");
-        // Reset the payout, wins and fight fields
-        players[_playerId].payout = 0;
-        players[_playerId].wins = 0;
-        players[_playerId].fights= 0;
-        // Emit event for payout claim
-        emit PayoutsClaimed(msg.sender, payoutAmount);
-    }
-    
-    function addCurrency(IERC20 _paytoken) external onlyOwner {
-        AllowedCrypto.push(
-            TokenInfo({
-                paytoken: _paytoken
-            })
-        );
+    function setTaxes (uint256 _stakeTax, uint256 _replenishTax ) external onlyOwner {
+        tax = _stakeTax;
+        replenishTax = _replenishTax;
     }
 
-    function _baseURI() internal view virtual override returns (string memory) {
-    return baseURI;
+    function setGAMEToken(address _GAMEToken) external onlyOwner {
+        GAMEToken = IERC20(_GAMEToken);
     }
 
-    function updateBaseURI(string memory _newLink) external onlyOwner() {
-        baseURI = _newLink;
+    function setPayToken(address _payToken) external onlyOwner {
+        payToken = IERC20(_payToken);
     }
 
-    function tokenURI(uint256 _tokenId) public view override returns (string memory) {
-    require(_tokenId <= totalSupply(), "Not Found");
-    return
-      bytes(baseURI).length > 0
-        ? string(abi.encodePacked(baseURI, _tokenId.toString(), ".json"))
-        : "";
+    function setBattledogs (address _battledogs) external onlyOwner {
+        battledogs = _battledogs;
+    }
+
+    function addToBlacklist(address[] calldata _addresses) external onlyOwner {
+        for (uint256 i = 0; i < _addresses.length; i++) {
+            blacklist[_addresses[i]] = 1;
+        }
+    }
+
+    function removeFromBlacklist(address[] calldata _addresses) external onlyOwner {
+        for (uint256 i = 0; i < _addresses.length; i++) {
+            blacklist[_addresses[i]] = 0;
+        }
     }
 
     event Pause();
@@ -521,94 +262,26 @@ contract battledog is ERC721Enumerable, Ownable, ReentrancyGuard {
         require(paused, "Contract not paused.");
         paused = false;
         emit Unpause();
-    } 
-
-    // Getters
-  function getPlayers() public view returns  (Player[] memory) {
-        uint256 counter = 0;
-        uint256 total = totalSupply();
-        Player[] memory result = new Player[](total);    
-        for (uint256 i = 0; i < total; i++) {
-                result[counter] = players[i];
-                counter++;
-        }
-        return result;
-    }
-
-  function getPlayerOwners(address _player) public view returns (Player[] memory) {
-        Player[] memory result = new Player[](balanceOf(_player));
-        uint256 counter = 0;        
-        uint256 total = totalSupply();
-        for (uint256 i = 0; i < total; i++) {
-            if (ownerOf(i) == _player) {
-                result[counter] = players[i];
-                counter++;
-            }
-        }
-        return result;
-    } 
-    
-    function addAssaulter(uint256 attackerId, uint256 defenderId, uint256 stolenPoints) internal {
-        Assaulter memory assaulter = Assaulter({
-            attackerId: attackerId,
-            defenderId: defenderId,
-            stolenPoints: stolenPoints,
-            timestamp: fightTimestamps[attackerId][defenderId]
-        });
-        assaulters[attackerId].push(assaulter);
-    }
-
-    function getAssaulters(uint256 attackerId) public view returns (Assaulter[] memory) {
-        uint256 total = assaulters[attackerId].length;
-        Assaulter[] memory result = new Assaulter[](total);
-        
-        uint256 counter = 0;
-        for (uint256 i = 0; i < total; i++) { 
-            if (assaulters[attackerId][i].attackerId == attackerId) { 
-                result[counter] = assaulters[attackerId][i];
-                counter++;  
-            }
-        }
-        return result;
-    }
-
-    function addDebilitator(uint256 attackerId, uint256 defenderId, uint256 stolenPoints) internal {
-        Debilitator memory debilitator = Debilitator({
-            attackerId: attackerId,
-            defenderId: defenderId,
-            stolenPoints: stolenPoints,
-            timestamp: fightTimestamps[attackerId][defenderId]
-        });
-        debilitators[attackerId].push(debilitator);
-    }
-
-    function getDebilitators(uint256 attackerId) public view returns (Debilitator[] memory) {
-        uint256 counter = 0;
-        uint256 total = debilitators[attackerId].length;
-        Debilitator[] memory result = new Debilitator[](total);
-        
-        for (uint256 i = 0; i < total; i++) { 
-            if (debilitators[attackerId][i].attackerId == attackerId) { 
-                result[counter] = debilitators[attackerId][i];  
-                counter++; 
-            }
-        }
-        return result;
-    }
-
-    function addToBlacklist(uint256[] calldata _nfts) external onlyOwner {
-        for (uint256 i = 0; i < _nfts.length; i++) {
-            blacklisted[_nfts[i]].blacklist = true;
-        }
-    }
-
-    function removeFromBlacklist(uint256[] calldata _nfts) external onlyOwner {
-        for (uint256 i = 0; i < _nfts.length; i++) {
-            blacklisted[_nfts[i]].blacklist = false;
-        }
     }
 
     function setGuard (address _newGuard) external onlyGuard {
         guard = _newGuard;
     }
-}
+
+    event ReplenishOn();
+    function replenishOn(uint256 _replenishTax) external onlyOwner{
+        require(!replenisher, "Replish already turned off.");
+        replenisher = true;
+        replenishTax = _replenishTax;
+        emit ReplenishOn();
+    }
+
+    event ReplenishOff();
+    function replenishOff() external onlyOwner {
+        require(replenisher, "Replenish is in progress.");
+        replenishTax = 0;
+        currentReplenish = 0;
+        replenisher = false;
+        emit ReplenishOff();
+    }
+}              
