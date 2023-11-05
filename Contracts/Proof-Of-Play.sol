@@ -16,8 +16,8 @@ interface IBattledog {
         uint256 history;
     }
 
-    function getPlayers() external view returns (Player[] memory);
-    function getPlayerOwners(address _user) external returns (Player[] memory);
+    function players(uint256 _index) external view returns (Player[] memory);
+    function ownerOf(uint256 _index) external returns (address);
     function blacklisted(uint256 _index) external view returns (bool);
 }
 
@@ -80,13 +80,9 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         _;
     }
 
-    function getMinerData() public nonReentrant {
-        IBattledog.Player[] memory players = IBattledog(battledogs).getPlayers();
-        activeMinersLength = players.length;
-
-        for (uint256 i = 0; i < players.length; i++) {
-            ActiveMiners[i] = players[i];
-        }
+    function getMinerData(uint256 _tokenId) internal {
+        IBattledog.Player[] memory players = IBattledog(battledogs).players(_tokenId);
+        ActiveMiners[_tokenId] = players[_tokenId];
     }
 
     function getActiveMiner(uint256 index) public view returns (IBattledog.Player memory) {
@@ -95,15 +91,12 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
     }
 
     function getOwnerData(uint256 _tokenId) internal returns (bool) {        
-    // Get the Player structs owned by the msg.sender
-    IBattledog.Player[] memory owners = IBattledog(battledogs).getPlayerOwners(msg.sender);
-
-    // Iterate through the stored Player structs and compare the _tokenId with the id of each Player struct
-        for (uint256 i = 0; i < owners.length; i++) {
-            if (owners[i].id == _tokenId) {
-                return true;
-            }
-        }
+    // Get the token id owned by the msg.sender
+    address owner = IBattledog(battledogs).ownerOf(_tokenId);
+      // compare the _tokenId 
+      if (owner == msg.sender) {
+              return true;
+            }        
         return false;
     }
 
@@ -112,20 +105,15 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         require(!paused, "Paused Contract");
 
         for (uint256 a = 0; a < _nfts.length; a++) {
-            uint256 tokenId = _nfts[a]; // Current NFT id
+            uint256 tokenId = _nfts[a]; // // Current NFT id
             // Require Token Ownership    
             require(getOwnerData(tokenId), "Not Owner");        
             // Require Miner hasn't claimed within timelock
             require(MinerClaims[tokenId] + timeLock < block.timestamp, "Timelocked");
             // Require Miner is not on blacklist
             require(!IBattledog(battledogs).blacklisted(tokenId), "NFT Blacklisted");
-            // Reorganize ActiveMiners array
-            IBattledog.Player[] memory players = IBattledog(battledogs).getPlayers();
-            activeMinersLength = players.length;
-
-            for (uint256 i = 0; i < players.length; i++) {
-                      ActiveMiners[i] = players[i];
-                }
+            // Include In ActiveMiners array
+            getMinerData(tokenId);
 
             // Check if the miner is activated
             if (ActiveMiners[tokenId].activate > 0) {
@@ -222,4 +210,4 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         paused = false;
         emit Unpause();
     } 
-}              
+}  
