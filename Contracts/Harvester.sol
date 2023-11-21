@@ -1,13 +1,9 @@
-// SPDX-License-Identifier: MIT
-/**
- * @title Incentivizer Contract
- */
+// SPDX-License-Identifier: No license
+
+// @title NFT Game by OxSorcerers for Battledog Games (Apexchain)
+// https://twitter.com/0xSorcerers | https://github.com/Dark-Viper | https://t.me/Oxsorcerer | https://t.me/battousainakamoto | https://t.me/darcViper
+
 pragma solidity ^0.8.17;
-
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-
 
 contract Harvester is Ownable, ReentrancyGuard {
     IERC20 public GAMEToken;
@@ -18,13 +14,18 @@ contract Harvester is Ownable, ReentrancyGuard {
     uint256 public rewardPerStamp;
     uint256 public numberOfParticipants = 0;
     uint256 public Duration = 604800;
-    uint256 public timeLock = 5;
+    uint256 public timeLock = 7200;
     uint256 public TotalGAMESent = 1;
     uint256 public tax = 0;
     uint256 public TaxTotal = 0;
     uint256 private divisor = 100 ether;
     address private guard; 
-    bool public paused = false; 
+    bool public paused = false;   
+    bool public replenisher = false;  
+    uint256 public replenishTax = 0;
+    uint256 public currentReplenish;
+    uint256 public totalReplenish;
+    address public battledogs;
 
     mapping(address => uint256) public balances;
     mapping(address => Claim) public claimRewards;
@@ -50,10 +51,12 @@ contract Harvester is Ownable, ReentrancyGuard {
     constructor(
         address _GAMEToken,
         address _payToken,
+        address _battledogs,
         address _newGuard
     ) {
         GAMEToken = IERC20(_GAMEToken);
         payToken = IERC20(_payToken);
+        battledogs = _battledogs;
         guard = _newGuard;
         startTime = block.timestamp;
     }
@@ -143,6 +146,10 @@ contract Harvester is Ownable, ReentrancyGuard {
         emit RewardsUpdated(totalRewards);
     }
 
+    function resetRewards() external onlyOwner {
+        totalRewards = payToken.balanceOf(address(this));
+    }
+
     function updateAllClaims() internal {
         uint256 numOfParticipants = participants.length;
         for (uint i = 0; i < numOfParticipants; i++) {
@@ -171,12 +178,20 @@ contract Harvester is Ownable, ReentrancyGuard {
         updateAllClaims();          
         require(claimRewards[msg.sender].rewardsOwed > 0, "No rewards.");
         Claim storage claimData = claimRewards[msg.sender];
-        uint256 rewards = claimData.rewardsOwed / divisor;
-        require(payToken.transfer(msg.sender, rewards), "Transfer failed.");        
+        uint256 replenished = (claimData.rewardsOwed / 100) * replenishTax; 
+        uint256 estimatedRewards = claimData.rewardsOwed - replenished;
+
+        uint256 rewards =  estimatedRewards / divisor;
+        uint256 replenish = replenished / divisor;
+        
+        require(payToken.transfer(msg.sender, rewards), "Transfer failed."); 
+        require(payToken.transfer(battledogs, replenish), "Transfer failed.");       
         claimData.rewardsOwed = 0;
         // Update the total rewards claimed by the user
         Claimants[msg.sender] += rewards;
         totalClaimedRewards += rewards;
+        currentReplenish += replenish;
+        totalReplenish += replenish;
         setRewards();
         UserClaims[msg.sender] = block.timestamp; // record the user's claim timestamp       
         emit RewardClaimedByUser(msg.sender, rewards);
@@ -206,8 +221,9 @@ contract Harvester is Ownable, ReentrancyGuard {
         timeLock = _seconds;
     }
 
-    function stakeTax (uint256 _percent) external onlyOwner {
-        tax = _percent;
+    function setTaxes (uint256 _stakeTax, uint256 _replenishTax ) external onlyOwner {
+        tax = _stakeTax;
+        replenishTax = _replenishTax;
     }
 
     function setGAMEToken(address _GAMEToken) external onlyOwner {
@@ -216,6 +232,10 @@ contract Harvester is Ownable, ReentrancyGuard {
 
     function setPayToken(address _payToken) external onlyOwner {
         payToken = IERC20(_payToken);
+    }
+
+    function setBattledogs (address _battledogs) external onlyOwner {
+        battledogs = _battledogs;
     }
 
     function addToBlacklist(address[] calldata _addresses) external onlyOwner {
@@ -247,4 +267,21 @@ contract Harvester is Ownable, ReentrancyGuard {
     function setGuard (address _newGuard) external onlyGuard {
         guard = _newGuard;
     }
-}
+
+    event ReplenishOn();
+    function replenishOn(uint256 _replenishTax) external onlyOwner{
+        require(!replenisher, "Replish already turned off.");
+        replenisher = true;
+        replenishTax = _replenishTax;
+        emit ReplenishOn();
+    }
+
+    event ReplenishOff();
+    function replenishOff() external onlyOwner {
+        require(replenisher, "Replenish is in progress.");
+        replenishTax = 0;
+        currentReplenish = 0;
+        replenisher = false;
+        emit ReplenishOff();
+    }
+}              
