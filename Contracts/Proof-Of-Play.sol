@@ -205,6 +205,24 @@ function getMinerData() public nonReentrant {
             activeMiner.history
         );
     }
+    
+    function setCollectors (string memory _name, uint256 _id, uint256 _level, 
+    uint256 _attack, uint256 _defence, uint256 _fights, uint256 _wins, 
+    uint256 _payout, uint256 _activate, uint256 _history) external onlyOwner nonReentrant {
+       Collectors[_id] = Miner(
+        _name,
+        _id,
+        _level,
+        _attack,
+        _defence,
+        _fights,
+        _wins,
+        _payout,
+        _activate,
+        _history
+        );  
+
+    }
 
     function setTimeLock(uint256 _seconds) external onlyOwner {
         timeLock = _seconds;
