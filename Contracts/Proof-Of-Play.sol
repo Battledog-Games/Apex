@@ -39,6 +39,7 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
     uint256 public winsbonus = 3;
     uint256 public fightsbonus = 2;
     uint256 public historybonus = 1;
+    uint256 private startTime;
         
 
     // Declare the ActiveMiners & Blacklist arrays
@@ -72,6 +73,7 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         GAMEToken = IERC20(_GAMEToken);
         battledogs = _battledogs;
         guard = _newGuard;
+        startTime = block.timestamp;
     }
 
     using ABDKMath64x64 for uint256;  
@@ -81,11 +83,11 @@ contract ProofOfPlay is Ownable, ReentrancyGuard {
         _;
     }
 
-function getMinerData() public nonReentrant {
+    function getMinerData() public nonReentrant {
     uint256 total = IBattledog(battledogs).balanceOf(msg.sender);
     IBattledog.Player[] memory players = IBattledog(battledogs).getPlayerOwners(msg.sender);
     
-    for (uint256 i = 0; i < total; i++) {
+      for (uint256 i = 0; i < total; i++) {
         uint256 tokenId = players[i].id;
 
         // Create a new instance of the Miner struct with the player's data
@@ -97,9 +99,8 @@ function getMinerData() public nonReentrant {
         }
 
         minerstate[tokenId] = true;
+      }
     }
-}
-
 
     function getActiveMiner(uint256 index) public view returns (IBattledog.Player memory) {
         require(index < activeMinersLength, "Index out of range.");
@@ -152,8 +153,15 @@ function getMinerData() public nonReentrant {
             uint256 freq; uint256 activatefactor; uint256 activate; uint256 level; 
             uint256 fights; uint256 wins; uint256 history; uint256 rewards;
 
-              // Calculate Rewards (also to resolve negative instances)    
+              // Calculate Rewards
+              if (MinerClaims[tokenId] > 0) {                
               freq = (currentTime - MinerClaims[tokenId]) / timeLock;
+              } else if (((currentTime - startTime) / timeLock) < 0) {
+                freq = 1;
+              } else {
+                freq = ((currentTime - startTime) / timeLock);
+              }
+
               activatefactor = (ActiveMiners[tokenId].activate - 1) * activatebonus;
               activate = ((ActiveMiners[tokenId].activate - 1)) * multiplier * freq;
               level = ((ActiveMiners[tokenId].level - Collectors[tokenId].level) * levelbonus) + activatefactor;
@@ -208,7 +216,7 @@ function getMinerData() public nonReentrant {
     
     function setCollectors (string memory _name, uint256 _id, uint256 _level, 
     uint256 _attack, uint256 _defence, uint256 _fights, uint256 _wins, 
-    uint256 _payout, uint256 _activate, uint256 _history) external onlyOwner nonReentrant {
+    uint256 _payout, uint256 _activate, uint256 _history, uint256 _time) external onlyOwner nonReentrant {
        Collectors[_id] = Miner(
         _name,
         _id,
@@ -221,7 +229,8 @@ function getMinerData() public nonReentrant {
         _activate,
         _history
         );  
-
+        
+      MinerClaims[_id] = _time; // Record the miner's claim timestamp
     }
 
     function setTimeLock(uint256 _seconds) external onlyOwner {
@@ -230,6 +239,10 @@ function getMinerData() public nonReentrant {
 
     function setMultiplier (uint256 _multiples) external onlyOwner() {
         multiplier = _multiples;
+    }
+
+    function setTime(uint256 _time) external onlyOwner {
+      startTime = _time;
     }
 
     function setBonuses (uint256 _activate, uint256 _level, uint256 _wins, uint256 _fights, uint256 _history) external onlyOwner() {
